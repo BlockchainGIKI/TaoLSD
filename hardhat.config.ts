@@ -20,7 +20,8 @@ import { mochaRootHooks } from "test/hooks";
 
 import "./tasks";
 
-const RPC_URL: string = process.env.RPC_URL || "";
+// const RPC_URL: string = process.env.RPC_URL || "";
+const RPC_URL: string = process.env.RPC_URL || "http://127.0.0.1:8555";
 const ACCOUNTS_PATH = "./accounts.json";
 
 const HARDHAT_FORKING_URL = process.env.HARDHAT_FORKING_URL || "";
@@ -53,6 +54,7 @@ const config: HardhatUserConfig = {
   networks: {
     "local": {
       url: process.env.LOCAL_RPC_URL || RPC_URL,
+      timeout: 20 * 60 * 1000, // 20 minutes
     },
     "mainnet-fork": {
       url: process.env.MAINNET_RPC_URL || RPC_URL,
