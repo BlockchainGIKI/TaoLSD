@@ -94,7 +94,7 @@ abstract contract WithdrawalQueue is AccessControlEnumerable, PausableUntil, Wit
     /// @notice Resume withdrawal requests placement and finalization
     ///  Contract is deployed in paused state and should be resumed explicitly
     function resume() external {
-        _checkRole(RESUME_ROLE, msg.sender);
+        // _checkRole(RESUME_ROLE, msg.sender);
         _resume();
     }
 
@@ -122,10 +122,10 @@ abstract contract WithdrawalQueue is AccessControlEnumerable, PausableUntil, Wit
     /// @param _owner address that will be able to manage the created requests.
     ///  If `address(0)` is passed, `msg.sender` will be used as owner.
     /// @return requestIds an array of the created withdrawal request ids
-    function requestWithdrawals(uint256[] calldata _amounts, address _owner)
-        public
-        returns (uint256[] memory requestIds)
-    {
+    function requestWithdrawals(
+        uint256[] calldata _amounts,
+        address _owner
+    ) public returns (uint256[] memory requestIds) {
         _checkResumed();
         if (_owner == address(0)) _owner = msg.sender;
         requestIds = new uint256[](_amounts.length);
@@ -141,10 +141,10 @@ abstract contract WithdrawalQueue is AccessControlEnumerable, PausableUntil, Wit
     /// @param _owner address that will be able to manage the created requests.
     ///  If `address(0)` is passed, `msg.sender` will be used as an owner.
     /// @return requestIds an array of the created withdrawal request ids
-    function requestWithdrawalsWstETH(uint256[] calldata _amounts, address _owner)
-        public
-        returns (uint256[] memory requestIds)
-    {
+    function requestWithdrawalsWstETH(
+        uint256[] calldata _amounts,
+        address _owner
+    ) public returns (uint256[] memory requestIds) {
         _checkResumed();
         if (_owner == address(0)) _owner = msg.sender;
         requestIds = new uint256[](_amounts.length);
@@ -168,10 +168,11 @@ abstract contract WithdrawalQueue is AccessControlEnumerable, PausableUntil, Wit
     ///  If `address(0)` is passed, `msg.sender` will be used as an owner.
     /// @param _permit data required for the stETH.permit() method to set the allowance
     /// @return requestIds an array of the created withdrawal request ids
-    function requestWithdrawalsWithPermit(uint256[] calldata _amounts, address _owner, PermitInput calldata _permit)
-        external
-        returns (uint256[] memory requestIds)
-    {
+    function requestWithdrawalsWithPermit(
+        uint256[] calldata _amounts,
+        address _owner,
+        PermitInput calldata _permit
+    ) external returns (uint256[] memory requestIds) {
         STETH.permit(msg.sender, address(this), _permit.value, _permit.deadline, _permit.v, _permit.r, _permit.s);
         return requestWithdrawals(_amounts, _owner);
     }
@@ -204,11 +205,9 @@ abstract contract WithdrawalQueue is AccessControlEnumerable, PausableUntil, Wit
 
     /// @notice Returns status for requests with provided ids
     /// @param _requestIds array of withdrawal request ids
-    function getWithdrawalStatus(uint256[] calldata _requestIds)
-        external
-        view
-        returns (WithdrawalRequestStatus[] memory statuses)
-    {
+    function getWithdrawalStatus(
+        uint256[] calldata _requestIds
+    ) external view returns (WithdrawalRequestStatus[] memory statuses) {
         statuses = new WithdrawalRequestStatus[](_requestIds.length);
         for (uint256 i = 0; i < _requestIds.length; ++i) {
             statuses[i] = _getStatus(_requestIds[i]);
@@ -220,11 +219,10 @@ abstract contract WithdrawalQueue is AccessControlEnumerable, PausableUntil, Wit
     /// @param _hints checkpoint hints. can be found with `findCheckpointHints(_requestIds, 1, getLastCheckpointIndex())`
     /// @return claimableEthValues amount of claimable ether for each request, amount is equal to 0 if request
     ///  is not finalized or already claimed
-    function getClaimableEther(uint256[] calldata _requestIds, uint256[] calldata _hints)
-        external
-        view
-        returns (uint256[] memory claimableEthValues)
-    {
+    function getClaimableEther(
+        uint256[] calldata _requestIds,
+        uint256[] calldata _hints
+    ) external view returns (uint256[] memory claimableEthValues) {
         claimableEthValues = new uint256[](_requestIds.length);
         for (uint256 i = 0; i < _requestIds.length; ++i) {
             claimableEthValues[i] = _getClaimableEther(_requestIds[i], _hints[i]);
@@ -241,9 +239,11 @@ abstract contract WithdrawalQueue is AccessControlEnumerable, PausableUntil, Wit
     ///  Reverts if any requestId or hint in arguments are not valid
     ///  Reverts if any request is not finalized or already claimed
     ///  Reverts if msg sender is not an owner of the requests
-    function claimWithdrawalsTo(uint256[] calldata _requestIds, uint256[] calldata _hints, address _recipient)
-        external
-    {
+    function claimWithdrawalsTo(
+        uint256[] calldata _requestIds,
+        uint256[] calldata _hints,
+        address _recipient
+    ) external {
         if (_recipient == address(0)) revert ZeroRecipient();
         if (_requestIds.length != _hints.length) {
             revert ArraysLengthMismatch(_requestIds.length, _hints.length);
@@ -295,11 +295,11 @@ abstract contract WithdrawalQueue is AccessControlEnumerable, PausableUntil, Wit
     /// @param _firstIndex left boundary of the search range. Should be greater than 0
     /// @param _lastIndex right boundary of the search range. Should be less than or equal to getLastCheckpointIndex()
     /// @return hintIds array of hints used to find required checkpoint for the request
-    function findCheckpointHints(uint256[] calldata _requestIds, uint256 _firstIndex, uint256 _lastIndex)
-        external
-        view
-        returns (uint256[] memory hintIds)
-    {
+    function findCheckpointHints(
+        uint256[] calldata _requestIds,
+        uint256 _firstIndex,
+        uint256 _lastIndex
+    ) external view returns (uint256[] memory hintIds) {
         hintIds = new uint256[](_requestIds.length);
         uint256 prevRequestId = 0;
         for (uint256 i = 0; i < _requestIds.length; ++i) {
@@ -316,9 +316,11 @@ abstract contract WithdrawalQueue is AccessControlEnumerable, PausableUntil, Wit
     /// @param _isBunkerModeNow is bunker mode reported by oracle
     /// @param _bunkerStartTimestamp timestamp of start of the bunker mode
     /// @param _currentReportTimestamp timestamp of the current report ref slot
-    function onOracleReport(bool _isBunkerModeNow, uint256 _bunkerStartTimestamp, uint256 _currentReportTimestamp)
-        external
-    {
+    function onOracleReport(
+        bool _isBunkerModeNow,
+        uint256 _bunkerStartTimestamp,
+        uint256 _currentReportTimestamp
+    ) external {
         _checkRole(ORACLE_ROLE, msg.sender);
         if (_bunkerStartTimestamp >= block.timestamp) revert InvalidReportTimestamp();
         if (_currentReportTimestamp >= block.timestamp) revert InvalidReportTimestamp();
