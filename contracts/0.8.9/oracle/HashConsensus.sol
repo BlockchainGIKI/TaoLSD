@@ -2,11 +2,10 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity 0.8.9;
 
-import { SafeCast } from "@openzeppelin/contracts-v4.4/utils/math/SafeCast.sol";
+import {SafeCast} from "@openzeppelin/contracts-v4.4/utils/math/SafeCast.sol";
 
-import { Math } from "../lib/Math.sol";
-import { AccessControlEnumerable } from "../utils/access/AccessControlEnumerable.sol";
-
+import {Math} from "../lib/Math.sol";
+import {AccessControlEnumerable} from "../utils/access/AccessControlEnumerable.sol";
 
 /// @notice A contract that gets consensus reports (i.e. hashes) pushed to and processes them
 /// asynchronously.
@@ -67,7 +66,6 @@ interface IReportAsyncProcessor {
     function getConsensusVersion() external view returns (uint256);
 }
 
-
 /// @notice A contract managing oracle members committee and allowing the members to reach
 /// consensus on a hash for each reporting frame.
 ///
@@ -101,7 +99,8 @@ contract HashConsensus is AccessControlEnumerable {
     error NonMember();
     error UnexpectedConsensusVersion(uint256 expected, uint256 received);
     error QuorumTooSmall(uint256 minQuorum, uint256 receivedQuorum);
-    error InvalidSlot();
+    // error InvalidSlot();
+    error InvalidSlot(uint256 slot, uint256 expectedSlot);
     error DuplicateReport();
     error EmptyReport();
     error StaleReport();
@@ -169,8 +168,7 @@ contract HashConsensus is AccessControlEnumerable {
 
     /// @notice An ACL role granting the permission to modify members list members and
     /// change the quorum by calling addMember, removeMember, and setQuorum functions.
-    bytes32 public constant MANAGE_MEMBERS_AND_QUORUM_ROLE =
-        keccak256("MANAGE_MEMBERS_AND_QUORUM_ROLE");
+    bytes32 public constant MANAGE_MEMBERS_AND_QUORUM_ROLE = keccak256("MANAGE_MEMBERS_AND_QUORUM_ROLE");
 
     /// @notice An ACL role granting the permission to disable the consensus by calling
     /// the disableConsensus function. Enabling the consensus back requires the possession
@@ -271,11 +269,11 @@ contract HashConsensus is AccessControlEnumerable {
     /// @notice Returns the immutable chain parameters required to calculate epoch and slot
     /// given a timestamp.
     ///
-    function getChainConfig() external view returns (
-        uint256 slotsPerEpoch,
-        uint256 secondsPerSlot,
-        uint256 genesisTime
-    ) {
+    function getChainConfig()
+        external
+        view
+        returns (uint256 slotsPerEpoch, uint256 secondsPerSlot, uint256 genesisTime)
+    {
         return (SLOTS_PER_EPOCH, SECONDS_PER_SLOT, GENESIS_TIME);
     }
 
@@ -285,11 +283,11 @@ contract HashConsensus is AccessControlEnumerable {
     /// @return epochsPerFrame Length of a frame in epochs.
     /// @return fastLaneLengthSlots Length of the fast lane interval in slots; see `getIsFastLaneMember`.
     ///
-    function getFrameConfig() external view returns (
-        uint256 initialEpoch,
-        uint256 epochsPerFrame,
-        uint256 fastLaneLengthSlots
-    ) {
+    function getFrameConfig()
+        external
+        view
+        returns (uint256 initialEpoch, uint256 epochsPerFrame, uint256 fastLaneLengthSlots)
+    {
         FrameConfig memory config = _frameConfig;
         return (config.initialEpoch, config.epochsPerFrame, config.fastLaneLengthSlots);
     }
@@ -304,10 +302,7 @@ contract HashConsensus is AccessControlEnumerable {
     /// @return reportProcessingDeadlineSlot The last slot at which the report can be processed by
     ///         the report processor contract.
     ///
-    function getCurrentFrame() external view returns (
-        uint256 refSlot,
-        uint256 reportProcessingDeadlineSlot
-    ) {
+    function getCurrentFrame() external view returns (uint256 refSlot, uint256 reportProcessingDeadlineSlot) {
         ConsensusFrame memory frame = _getCurrentFrame();
         return (frame.refSlot, frame.reportProcessingDeadlineSlot);
     }
@@ -330,12 +325,7 @@ contract HashConsensus is AccessControlEnumerable {
             revert InitialEpochAlreadyArrived();
         }
 
-        _setFrameConfig(
-            initialEpoch,
-            prevConfig.epochsPerFrame,
-            prevConfig.fastLaneLengthSlots,
-            prevConfig
-        );
+        _setFrameConfig(initialEpoch, prevConfig.epochsPerFrame, prevConfig.fastLaneLengthSlots, prevConfig);
 
         if (_getInitialFrame().refSlot < _getLastProcessingRefSlot()) {
             revert InitialEpochRefSlotCannotBeEarlierThanProcessingSlot();
@@ -347,9 +337,10 @@ contract HashConsensus is AccessControlEnumerable {
     /// @param epochsPerFrame Length of a frame in epochs.
     /// @param fastLaneLengthSlots Length of the fast lane interval in slots; see `getIsFastLaneMember`.
     ///
-    function setFrameConfig(uint256 epochsPerFrame, uint256 fastLaneLengthSlots)
-        external onlyRole(MANAGE_FRAME_CONFIG_ROLE)
-    {
+    function setFrameConfig(
+        uint256 epochsPerFrame,
+        uint256 fastLaneLengthSlots
+    ) external onlyRole(MANAGE_FRAME_CONFIG_ROLE) {
         // Updates epochsPerFrame in a way that either keeps the current reference slot the same
         // or increases it by at least the minimum of old and new frame sizes.
         uint256 timestamp = _getTime();
@@ -405,10 +396,7 @@ contract HashConsensus is AccessControlEnumerable {
     /// @notice Returns all current members, together with the last reference slot each member
     /// submitted a report for.
     ///
-    function getMembers() external view returns (
-        address[] memory addresses,
-        uint256[] memory lastReportedRefSlots
-    ) {
+    function getMembers() external view returns (address[] memory addresses, uint256[] memory lastReportedRefSlots) {
         return _getMembers(false);
     }
 
@@ -417,10 +405,11 @@ contract HashConsensus is AccessControlEnumerable {
     ///
     /// See `getIsFastLaneMember`.
     ///
-    function getFastLaneMembers() external view returns (
-        address[] memory addresses,
-        uint256[] memory lastReportedRefSlots
-    ) {
+    function getFastLaneMembers()
+        external
+        view
+        returns (address[] memory addresses, uint256[] memory lastReportedRefSlots)
+    {
         return _getMembers(true);
     }
 
@@ -432,23 +421,15 @@ contract HashConsensus is AccessControlEnumerable {
     ///        it to zero disables the fast lane subset, allowing any oracle to report starting from
     ///        the first slot of a frame and until the frame's reporting deadline.
     ///
-    function setFastLaneLengthSlots(uint256 fastLaneLengthSlots)
-        external onlyRole(MANAGE_FAST_LANE_CONFIG_ROLE)
-    {
+    function setFastLaneLengthSlots(uint256 fastLaneLengthSlots) external onlyRole(MANAGE_FAST_LANE_CONFIG_ROLE) {
         _setFastLaneLengthSlots(fastLaneLengthSlots);
     }
 
-    function addMember(address addr, uint256 quorum)
-        external
-        onlyRole(MANAGE_MEMBERS_AND_QUORUM_ROLE)
-    {
+    function addMember(address addr, uint256 quorum) external onlyRole(MANAGE_MEMBERS_AND_QUORUM_ROLE) {
         _addMember(addr, quorum);
     }
 
-    function removeMember(address addr, uint256 quorum)
-        external
-        onlyRole(MANAGE_MEMBERS_AND_QUORUM_ROLE)
-    {
+    function removeMember(address addr, uint256 quorum) external onlyRole(MANAGE_MEMBERS_AND_QUORUM_ROLE) {
         _removeMember(addr, quorum);
     }
 
@@ -476,10 +457,7 @@ contract HashConsensus is AccessControlEnumerable {
         return _reportProcessor;
     }
 
-    function setReportProcessor(address newProcessor)
-        external
-        onlyRole(MANAGE_REPORT_PROCESSOR_ROLE)
-    {
+    function setReportProcessor(address newProcessor) external onlyRole(MANAGE_REPORT_PROCESSOR_ROLE) {
         _setReportProcessor(newProcessor);
     }
 
@@ -497,22 +475,19 @@ contract HashConsensus is AccessControlEnumerable {
     /// @return isReportProcessing If consensus report for the current frame is already
     ///         being processed. Consensus can be changed before the processing starts.
     ///
-    function getConsensusState() external view returns (
-        uint256 refSlot,
-        bytes32 consensusReport,
-        bool isReportProcessing
-    ) {
+    function getConsensusState()
+        external
+        view
+        returns (uint256 refSlot, bytes32 consensusReport, bool isReportProcessing)
+    {
         refSlot = _getCurrentFrame().refSlot;
-        (consensusReport,,) = _getConsensusReport(refSlot, _quorum);
+        (consensusReport, , ) = _getConsensusReport(refSlot, _quorum);
         isReportProcessing = _getLastProcessingRefSlot() == refSlot;
     }
 
     /// @notice Returns report variants and their support for the current reference slot.
     ///
-    function getReportVariants() external view returns (
-        bytes32[] memory variants,
-        uint256[] memory support
-    ) {
+    function getReportVariants() external view returns (bytes32[] memory variants, uint256[] memory support) {
         if (_reportingState.lastReportRefSlot != _getCurrentFrame().refSlot) {
             return (variants, support);
         }
@@ -531,24 +506,18 @@ contract HashConsensus is AccessControlEnumerable {
     struct MemberConsensusState {
         /// @notice Current frame's reference slot.
         uint256 currentFrameRefSlot;
-
         /// @notice Consensus report for the current frame, if any. Zero bytes otherwise.
         bytes32 currentFrameConsensusReport;
-
         /// @notice Whether the provided address is a member of the oracle committee.
         bool isMember;
-
         /// @notice Whether the oracle committee member is in the fast lane members subset
         /// of the current reporting frame. See `getIsFastLaneMember`.
         bool isFastLane;
-
         /// @notice Whether the oracle committee member is allowed to submit a report at
         /// the moment of the call.
         bool canReport;
-
         /// @notice The last reference slot for which the member submitted a report.
         uint256 lastMemberReportRefSlot;
-
         /// @notice The hash reported by the member for the current frame, if any.
         /// Zero bytes otherwise.
         bytes32 currentFrameMemberReport;
@@ -561,29 +530,29 @@ contract HashConsensus is AccessControlEnumerable {
     /// @param addr The member address.
     /// @return result See the docs for `MemberConsensusState`.
     ///
-    function getConsensusStateForMember(address addr)
-        external view returns (MemberConsensusState memory result)
-    {
+    function getConsensusStateForMember(address addr) external view returns (MemberConsensusState memory result) {
         ConsensusFrame memory frame = _getCurrentFrame();
         result.currentFrameRefSlot = frame.refSlot;
-        (result.currentFrameConsensusReport,,) = _getConsensusReport(frame.refSlot, _quorum);
+        (result.currentFrameConsensusReport, , ) = _getConsensusReport(frame.refSlot, _quorum);
 
         uint256 index = _memberIndices1b[addr];
         result.isMember = index != 0;
 
         if (index != 0) {
-            unchecked { --index; } // convert to 0-based
+            unchecked {
+                --index;
+            } // convert to 0-based
             MemberState memory memberState = _memberStates[index];
 
             result.lastMemberReportRefSlot = memberState.lastReportRefSlot;
-            result.currentFrameMemberReport =
-                result.lastMemberReportRefSlot == frame.refSlot
-                    ? _reportVariants[memberState.lastReportVariantIndex].hash
-                    : ZERO_HASH;
+            result.currentFrameMemberReport = result.lastMemberReportRefSlot == frame.refSlot
+                ? _reportVariants[memberState.lastReportVariantIndex].hash
+                : ZERO_HASH;
 
             uint256 slot = _computeSlotAtTimestamp(_getTime());
 
-            result.canReport = slot <= frame.reportProcessingDeadlineSlot &&
+            result.canReport =
+                slot <= frame.reportProcessingDeadlineSlot &&
                 frame.refSlot > _getLastProcessingRefSlot();
 
             result.isFastLane = _isFastLaneMember(index, frame.index);
@@ -626,11 +595,7 @@ contract HashConsensus is AccessControlEnumerable {
             revert FastLanePeriodCannotBeLongerThanFrame();
         }
 
-        _frameConfig = FrameConfig(
-            initialEpoch.toUint64(),
-            epochsPerFrame.toUint64(),
-            fastLaneLengthSlots.toUint64()
-        );
+        _frameConfig = FrameConfig(initialEpoch.toUint64(), epochsPerFrame.toUint64(), fastLaneLengthSlots.toUint64());
 
         if (initialEpoch != prevConfig.initialEpoch || epochsPerFrame != prevConfig.epochsPerFrame) {
             emit FrameConfigSet(initialEpoch, epochsPerFrame);
@@ -649,41 +614,41 @@ contract HashConsensus is AccessControlEnumerable {
         return _getFrameAtIndex(0, _frameConfig);
     }
 
-    function _getFrameAtTimestamp(uint256 timestamp, FrameConfig memory config)
-        internal view returns (ConsensusFrame memory)
-    {
+    function _getFrameAtTimestamp(
+        uint256 timestamp,
+        FrameConfig memory config
+    ) internal view returns (ConsensusFrame memory) {
         return _getFrameAtIndex(_computeFrameIndex(timestamp, config), config);
     }
 
-    function _getFrameAtIndex(uint256 frameIndex, FrameConfig memory config)
-        internal view returns (ConsensusFrame memory)
-    {
+    function _getFrameAtIndex(
+        uint256 frameIndex,
+        FrameConfig memory config
+    ) internal view returns (ConsensusFrame memory) {
         uint256 frameStartEpoch = _computeStartEpochOfFrameWithIndex(frameIndex, config);
         uint256 frameStartSlot = _computeStartSlotAtEpoch(frameStartEpoch);
         uint256 nextFrameStartSlot = frameStartSlot + config.epochsPerFrame * SLOTS_PER_EPOCH;
 
-        return ConsensusFrame({
-            index: frameIndex,
-            refSlot: uint64(frameStartSlot - 1),
-            reportProcessingDeadlineSlot: uint64(nextFrameStartSlot - 1 - DEADLINE_SLOT_OFFSET)
-        });
+        return
+            ConsensusFrame({
+                index: frameIndex,
+                refSlot: uint64(frameStartSlot - 1),
+                reportProcessingDeadlineSlot: uint64(nextFrameStartSlot - 1 - DEADLINE_SLOT_OFFSET)
+            });
     }
 
-    function _computeFrameStartEpoch(uint256 timestamp, FrameConfig memory config)
-        internal view returns (uint256)
-    {
+    function _computeFrameStartEpoch(uint256 timestamp, FrameConfig memory config) internal view returns (uint256) {
         return _computeStartEpochOfFrameWithIndex(_computeFrameIndex(timestamp, config), config);
     }
 
-    function _computeStartEpochOfFrameWithIndex(uint256 frameIndex, FrameConfig memory config)
-        internal pure returns (uint256)
-    {
+    function _computeStartEpochOfFrameWithIndex(
+        uint256 frameIndex,
+        FrameConfig memory config
+    ) internal pure returns (uint256) {
         return config.initialEpoch + frameIndex * config.epochsPerFrame;
     }
 
-    function _computeFrameIndex(uint256 timestamp, FrameConfig memory config)
-        internal view returns (uint256)
-    {
+    function _computeFrameIndex(uint256 timestamp, FrameConfig memory config) internal view returns (uint256) {
         uint256 epoch = _computeEpochAtTimestamp(timestamp);
         if (epoch < config.initialEpoch) {
             revert InitialEpochIsYetToArrive();
@@ -714,7 +679,7 @@ contract HashConsensus is AccessControlEnumerable {
         return epoch * SLOTS_PER_EPOCH;
     }
 
-    function _getTime() internal virtual view returns (uint256) {
+    function _getTime() internal view virtual returns (uint256) {
         return block.timestamp; // solhint-disable-line not-rely-on-time
     }
 
@@ -775,9 +740,7 @@ contract HashConsensus is AccessControlEnumerable {
             // member reported at least once
             ConsensusFrame memory frame = _getCurrentFrame();
 
-            if (memberState.lastReportRefSlot == frame.refSlot &&
-                _getLastProcessingRefSlot() < frame.refSlot
-            ) {
+            if (memberState.lastReportRefSlot == frame.refSlot && _getLastProcessingRefSlot() < frame.refSlot) {
                 // member reported for the current ref. slot and the consensus report
                 // is not processing yet => need to cancel the member's report
                 --_reportVariants[memberState.lastReportVariantIndex].support;
@@ -800,9 +763,10 @@ contract HashConsensus is AccessControlEnumerable {
 
     /// @dev Returns start and past-end incides (mod totalMembers) of the fast lane members subset.
     ///
-    function _getFastLaneSubset(uint256 frameIndex, uint256 totalMembers)
-        internal view returns (uint256 startIndex, uint256 pastEndIndex)
-    {
+    function _getFastLaneSubset(
+        uint256 frameIndex,
+        uint256 totalMembers
+    ) internal view returns (uint256 startIndex, uint256 pastEndIndex) {
         uint256 quorum = _quorum;
         if (quorum >= totalMembers) {
             startIndex = 0;
@@ -820,17 +784,13 @@ contract HashConsensus is AccessControlEnumerable {
         uint256 totalMembers = _memberStates.length;
         (uint256 flLeft, uint256 flPastRight) = _getFastLaneSubset(frameIndex, totalMembers);
         unchecked {
-            return (
-                flPastRight != 0 &&
-                Math.pointInClosedIntervalModN(index, flLeft, flPastRight - 1, totalMembers)
-            );
+            return (flPastRight != 0 && Math.pointInClosedIntervalModN(index, flLeft, flPastRight - 1, totalMembers));
         }
     }
 
-    function _getMembers(bool fastLane) internal view returns (
-        address[] memory addresses,
-        uint256[] memory lastReportedRefSlots
-    ) {
+    function _getMembers(
+        bool fastLane
+    ) internal view returns (address[] memory addresses, uint256[] memory lastReportedRefSlots) {
         uint256 totalMembers = _memberStates.length;
         uint256 left;
         uint256 right;
@@ -858,7 +818,7 @@ contract HashConsensus is AccessControlEnumerable {
     ///
 
     function _submitReport(uint256 slot, bytes32 report, uint256 consensusVersion) internal {
-        if (slot == 0) revert InvalidSlot();
+        if (slot == 0) revert InvalidSlot(0, 0);
         if (slot > type(uint64).max) revert NumericOverflow();
         if (report == ZERO_HASH) revert EmptyReport();
 
@@ -875,12 +835,10 @@ contract HashConsensus is AccessControlEnumerable {
         FrameConfig memory config = _frameConfig;
         ConsensusFrame memory frame = _getFrameAtTimestamp(timestamp, config);
 
-        if (slot != frame.refSlot) revert InvalidSlot();
+        if (slot != frame.refSlot) revert InvalidSlot(slot, frame.refSlot);
         if (currentSlot > frame.reportProcessingDeadlineSlot) revert StaleReport();
 
-        if (currentSlot <= frame.refSlot + config.fastLaneLengthSlots &&
-            !_isFastLaneMember(memberIndex, frame.index)
-        ) {
+        if (currentSlot <= frame.refSlot + config.fastLaneLengthSlots && !_isFastLaneMember(memberIndex, frame.index)) {
             revert NonFastLaneMemberCannotReportWithinFastLaneInterval();
         }
 
@@ -935,10 +893,7 @@ contract HashConsensus is AccessControlEnumerable {
             _reportVariantsLength = ++variantsLength;
         }
 
-        _memberStates[memberIndex] = MemberState({
-            lastReportRefSlot: uint64(slot),
-            lastReportVariantIndex: varIndex
-        });
+        _memberStates[memberIndex] = MemberState({lastReportRefSlot: uint64(slot), lastReportVariantIndex: varIndex});
 
         emit ReportReceived(slot, _msgSender(), report);
 
@@ -955,7 +910,8 @@ contract HashConsensus is AccessControlEnumerable {
         uint256 variantIndex,
         uint256 support
     ) internal {
-        if (_reportingState.lastConsensusRefSlot != frame.refSlot ||
+        if (
+            _reportingState.lastConsensusRefSlot != frame.refSlot ||
             _reportingState.lastConsensusVariantIndex != variantIndex
         ) {
             _reportingState.lastConsensusRefSlot = uint64(frame.refSlot);
@@ -1010,8 +966,10 @@ contract HashConsensus is AccessControlEnumerable {
             return;
         }
 
-        (bytes32 consensusReport, int256 consensusVariantIndex, uint256 support) =
-            _getConsensusReport(frame.refSlot, quorum);
+        (bytes32 consensusReport, int256 consensusVariantIndex, uint256 support) = _getConsensusReport(
+            frame.refSlot,
+            quorum
+        );
 
         if (consensusVariantIndex >= 0) {
             _consensusReached(frame, consensusReport, uint256(consensusVariantIndex), support);
@@ -1020,9 +978,10 @@ contract HashConsensus is AccessControlEnumerable {
         }
     }
 
-    function _getConsensusReport(uint256 currentRefSlot, uint256 quorum)
-        internal view returns (bytes32 report, int256 variantIndex, uint256 support)
-    {
+    function _getConsensusReport(
+        uint256 currentRefSlot,
+        uint256 quorum
+    ) internal view returns (bytes32 report, int256 variantIndex, uint256 support) {
         if (_reportingState.lastReportRefSlot != currentRefSlot) {
             // there were no reports for the current ref. slot
             return (ZERO_HASH, -1, 0);

@@ -15,7 +15,7 @@ import { ProtocolContext } from "./types";
 export const provision = async (ctx: ProtocolContext) => {
   await ensureHashConsensusInitialEpoch(ctx);
 
-  await ensureOracleCommitteeMembers(ctx, 5n);
+  // await ensureOracleCommitteeMembers(ctx, 5n);
 
   await unpauseStaking(ctx);
 

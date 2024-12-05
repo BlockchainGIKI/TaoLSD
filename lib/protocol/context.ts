@@ -40,7 +40,7 @@ export const getProtocolContext = async (): Promise<ProtocolContext> => {
       findEventsWithInterfaces(receipt, eventName, interfaces),
   } as ProtocolContext;
 
-  await provision(context);
+  // await provision(context);
 
   return context;
 };
