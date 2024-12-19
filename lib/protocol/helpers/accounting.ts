@@ -324,7 +324,7 @@ export const waitNextAvailableReportTime = async (ctx: ProtocolContext): Promise
 /**
  * Simulate oracle report to get the expected result.
  */
-const simulateReport = async (
+export const simulateReport = async (
   ctx: ProtocolContext,
   params: {
     refSlot: bigint;
@@ -426,7 +426,7 @@ export const handleOracleReport = async (
 /**
  * Get finalization batches to finalize withdrawals.
  */
-const getFinalizationBatches = async (
+export const getFinalizationBatches = async (
   ctx: ProtocolContext,
   params: {
     shareRate: bigint;

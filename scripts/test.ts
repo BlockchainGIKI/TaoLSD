@@ -3,9 +3,11 @@ import { ErrorDecoder } from 'ethers-decode-error'
 import { artifacts, ethers } from "hardhat";
 
 import { HardhatEthersSigner } from "@nomicfoundation/hardhat-ethers/signers";
+import { time } from '@nomicfoundation/hardhat-network-helpers';
 
-import { DSMAttestMessage, ether, impersonate, OracleReport, shareRate, getReportDataItems, calcReportDataHash } from 'lib';
+import { BigIntMath,calcReportDataHash, DSMAttestMessage, ether, getCurrentBlockTimestamp, getReportDataItems, impersonate, OracleReport} from 'lib';
 import { getProtocolContext, ProtocolContext } from "lib/protocol";
+import { getFinalizationBatches,simulateReport } from 'lib/protocol/helpers/accounting';
 
 type Block = {
     number: number;
@@ -72,7 +74,7 @@ async function stakeEther(){
     const stakingStatus:boolean = await lido.isStakingPaused(); 
     console.log("Is staking paused?", stakingStatus);
     if(!stakingStatus){ 
-        const deposit = ether("32.0");
+        const deposit = ether("64.0");
         try{
         const depositTx = await lido.connect(signers[0]).submit(ZeroAddress, { value: deposit });
         console.log("Transaction Receipt:", depositTx);
@@ -158,8 +160,8 @@ async function topUpLido(){
     const elRewardsVault: HardhatEthersSigner = await impersonate(await locator.elRewardsVault(), elRewardsVaultBalance);
     const withdrawalsVault: HardhatEthersSigner = await impersonate(await locator.withdrawalVault(), withdrawalsVaultBalance);
     // Configuring reward amounts to send to the vaults
-    const elRewardsToSend = ether("1.0");
-    const withdrawalsToSend = ether("1.0");
+    const elRewardsToSend = ether("32.0");
+    const withdrawalsToSend = ether("32.0");
     // Sending ether to EL Rewards vault
     const receiveELRewardsTx = await lido.connect(elRewardsVault).receiveELRewards({ value: elRewardsToSend });
     console.log("Receive EL Rewards Transaction:", receiveELRewardsTx);
@@ -177,7 +179,7 @@ async function distributeRewards(){
     console.log("After getting context");
     const agentSigner = await ctx.getSigner("agent");
     const [signer] = await ethers.getSigners();
-    const { hashConsensus, accountingOracle, lido, nor } = ctx.contracts;
+    const { hashConsensus, accountingOracle, lido, nor, burner, withdrawalQueue } = ctx.contracts;
     console.log("Before try");
     try{
         const managementRole = await hashConsensus.MANAGE_MEMBERS_AND_QUORUM_ROLE();
@@ -208,7 +210,7 @@ async function distributeRewards(){
         console.log("Oracle Committee Member(s): ", await hashConsensus.getMembers());
         console.log("Fast Lane Comittee Member(s)", await hashConsensus.getFastLaneMembers());
         const { refSlot } = await hashConsensus.getCurrentFrame();
-        console.log(await hashConsensus.getCurrentFrame());
+        console.log("Reference Slot", await hashConsensus.getCurrentFrame());
         const oracleVersion = await accountingOracle.getContractVersion();
         const consensusVersion = await accountingOracle.getConsensusVersion();
         const count = await nor.getNodeOperatorsCount()
@@ -221,6 +223,31 @@ async function distributeRewards(){
         // let reportFields: OracleReport & { refSlot: bigint };
         const elRewardsVaultBalance = await lido.getTotalELRewardsCollected();
         const withdrawalVaultBalance = await ethers.provider.getBalance(lido.address) - elRewardsVaultBalance
+        const [coverShares, nonCoverShares] = await burner.getSharesRequestedToBurn();
+        const sharesRequestedToBurn = coverShares + nonCoverShares;
+        console.log("Shares Requested to Burn:", sharesRequestedToBurn);
+
+        const params = {
+            refSlot,
+            beaconValidators: 1n,
+            clBalance: BigInt(32 * 1e9),
+            withdrawalVaultBalance,
+            elRewardsVaultBalance,
+            };
+        
+        const simulatedReport = await simulateReport(ctx, params);
+        const { postTotalPooledEther, postTotalShares, withdrawals, elRewards } = simulatedReport!;
+        const SHARE_RATE_PRECISION = 10n ** 27n;
+        const simulatedShareRate = (postTotalPooledEther * SHARE_RATE_PRECISION) / postTotalShares;
+        console.log("Simulated Share Rate:", simulatedShareRate);
+
+        const withdrawalFinalizationBatches = await getFinalizationBatches(ctx, {
+            shareRate: simulatedShareRate,
+            limitedWithdrawalVaultBalance: withdrawalVaultBalance,
+            limitedElRewardsVaultBalance: elRewardsVaultBalance,
+          });
+        console.log("Withdrawal Finalization Batches:", withdrawalFinalizationBatches);
+
         const reportFields = {
             consensusVersion: consensusVersion,// 1n,
             refSlot: refSlot,
@@ -230,14 +257,15 @@ async function distributeRewards(){
             numExitedValidatorsByStakingModule: [],
             withdrawalVaultBalance: withdrawalVaultBalance,
             elRewardsVaultBalance: elRewardsVaultBalance,
-            sharesRequestedToBurn: 0,
-            withdrawalFinalizationBatches: [],
-            simulatedShareRate: shareRate(1n),
+            sharesRequestedToBurn: sharesRequestedToBurn,// 0,
+            withdrawalFinalizationBatches: withdrawalFinalizationBatches,
+            simulatedShareRate: simulatedShareRate,
             isBunkerMode: false,
             extraDataFormat: 0n,
             extraDataHash: ethers.ZeroHash,
             extraDataItemsCount: 0n,
           }
+
         const reportItems = getReportDataItems(reportFields);
         const reportHash = calcReportDataHash(reportItems);
         console.log("Reference Slot:", refSlot, await accountingOracle.getLastProcessingRefSlot());
@@ -250,6 +278,18 @@ async function distributeRewards(){
         tx = await submitReportDataTx.wait();
         console.log("Submit Report Date (Accounting Oracle) Transaction:", tx);
 
+        const finalizeRole = await withdrawalQueue.FINALIZE_ROLE();
+        const finalizeRoleStatus: boolean = await withdrawalQueue.hasRole(finalizeRole, agentSigner.address);
+        if (!finalizeRoleStatus){
+        await withdrawalQueue.connect(agentSigner).grantRole(finalizeRole, agentSigner);
+        }
+        console.log(`${agentSigner.address} has FINALIZE_ROLE`);
+        
+        const batch = await withdrawalQueue.prefinalize([1], simulatedShareRate);
+        console.log("ETH to Lock:", batch.ethToLock, "Shares to burn:", batch.sharesToBurn)
+        
+        const finalizeTx = await withdrawalQueue.connect(agentSigner).finalize(1, simulatedShareRate, {value: batch.ethToLock});
+        console.log("Finalize Transaction:", finalizeTx);
     }
     catch(err){
         const decodedError = await errorDecoder.decode(err)
@@ -258,17 +298,125 @@ async function distributeRewards(){
     // let reportFields: OracleReport & { refSlot: bigint };
 }
 
+// async function calculateWithdrawals(elRewardsVaultBalance:bigint, withdrawalVaultBalance:bigint, refSlot: bigint){
+//     const ctx: ProtocolContext = await getProtocolContext();
+//     const { lido, withdrawalQueue, oracleReportSanityChecker } = ctx.contracts;
+    
+//     const bufferedEther = await lido.getBufferedEther();
+//     const unfinalizedSteth = await withdrawalQueue.unfinalizedStETH();
+//     const reservedBuffer = BigIntMath.min(bufferedEther, unfinalizedSteth);
+//     const availableEth = withdrawalVaultBalance + elRewardsVaultBalance + reservedBuffer;
+    
+//     const { requestTimestampMargin } = await oracleReportSanityChecker.getOracleReportLimits();
+//     const blockTimestamp = await getCurrentBlockTimestamp();
+//     const maxTimestamp = blockTimestamp - requestTimestampMargin;
+//     const MAX_REQUESTS_PER_CALL = 1000n;
+   
+//     const baseState = {
+//         remainingEthBudget: availableEth,
+//         finished: false,
+//         batches: Array(36).fill(0n),
+//         batchesLength: 0n,
+//       };
+
+//     const params = {
+//     refSlot,
+//     beaconValidators: 1n,
+//     clBalance: BigInt(32 * 1e9),
+//     withdrawalVaultBalance,
+//     elRewardsVaultBalance,
+//     };
+
+//     const simulatedReport = await simulateReport(ctx, params);
+//     const { postTotalPooledEther, postTotalShares, withdrawals, elRewards } = simulatedReport!;
+//     const SHARE_RATE_PRECISION = 10n ** 27n;
+//     const simulatedShareRate = (postTotalPooledEther * SHARE_RATE_PRECISION) / postTotalShares;
+
+//     let batchesState = await withdrawalQueue.calculateFinalizationBatches(
+//     simulatedShareRate,
+//     maxTimestamp,
+//     MAX_REQUESTS_PER_CALL,
+//     baseState,
+//     );
+
+//     while (!batchesState.finished) {
+//         const state = {
+//             remainingEthBudget: batchesState.remainingEthBudget,
+//             finished: batchesState.finished,
+//             batches: (batchesState.batches as Result).toArray(),
+//             batchesLength: batchesState.batchesLength,
+//         };
+
+//         batchesState = await withdrawalQueue.calculateFinalizationBatches(
+//             shareRate,
+//             maxTimestamp,
+//             MAX_REQUESTS_PER_CALL,
+//             state,
+//         );
+
+//     }
+// }
+
+
+async function withdrawal(){
+    const ctx: ProtocolContext = await getProtocolContext();
+    const {withdrawalQueue, lido} = ctx.contracts;
+    const [signers] = await ethers.getSigners();
+    const amountToWithdraw = ether("32.0");
+    const approveTx = await lido.connect(signers).approve(withdrawalQueue.address, amountToWithdraw);
+    console.log("Approved Withdrawal Queue as stEth Spender:", approveTx);
+    const requestWithdrawalsTx = await withdrawalQueue.connect(signers).requestWithdrawals([amountToWithdraw], signers.address);
+    console.log("Requested Withdrawal:", requestWithdrawalsTx);
+    console.log(`Number of withdrawal requests initiated by ${signers.address}`, await withdrawalQueue.balanceOf(signers.address));
+}
+
 export async function main() {
     const ctx: ProtocolContext = await getProtocolContext();
-    const { lido } = ctx.contracts;
+    const { lido, withdrawalQueue} = ctx.contracts;
+
     const [signers] = await ethers.getSigners();
-    await initializeProtocol();
-    await stakeEther();
-    console.log("stETH Balance after staking:", await lido.balanceOf(signers.address))
-    await depositEther();
-    await topUpLido()
-    await distributeRewards();
+    
+    // console.log("Initializing liquid staking protocol");
+    // console.log("------------------------------------");
+    // await initializeProtocol();
+    
+    // console.log("------------------------------------");
+    // console.log("Staking ether");
+    // console.log("------------------------------------");
+    
+    // await stakeEther();
+    // console.log("stETH Balance after staking:", await lido.balanceOf(signers.address));
+    // console.log("------------------------------------");
+    
+    // console.log("Depositing ether to Ethereum");
+    // console.log("------------------------------------");
+    // await depositEther();
+    
+    // console.log("------------------------------------");
+    // console.log("Depositing rewards in EL and Withdrawal vaults");
+    // console.log("------------------------------------");
+    // await topUpLido()
+
+    // await time.increase(3600 * 2); 
+
+    // console.log("------------------------------------");
+    // console.log("Generating withdrawal request");
+    // console.log("------------------------------------");
+    // await withdrawal();
+
+    // console.log("------------------------------------");
+    // console.log("Distributing rewards");
+    // console.log("------------------------------------");
+    // await distributeRewards();
+    
     console.log("stETH Balance after token rebasing:", await lido.balanceOf(signers.address));
+    const requestIDs = await withdrawalQueue.getWithdrawalRequests(signers.address);
+    console.log(requestIDs);
+    console.log("Statuses of withdrawal request(s)", await withdrawalQueue.getWithdrawalStatus([1]));
+    const claimTx = await withdrawalQueue.connect(signers).claimWithdrawal(1);
+    console.log("Claim Transaction:", claimTx);
+    const etherBalance = await ethers.provider.getBalance(signers.address);
+    console.log(`Ether balance of ${signers.address}: ${etherBalance}`);
 }
 
 main().catch((error) => {
